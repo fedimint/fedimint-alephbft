@@ -7,8 +7,9 @@ use crate::{
     },
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, UnitCoord},
-    Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
-    Receiver, Recipient, Round, Sender, Signature, SpawnHandle, UncheckedSigned,
+    BackupReader, BackupWriter, Config, Data, DataProvider, FinalizationHandler, Hasher,
+    MultiKeychain, Network, NodeIndex, Receiver, Recipient, Round, Sender, Signature, SpawnHandle,
+    UncheckedSigned,
 };
 use aleph_bft_types::{handle_task_termination, NodeMap, Terminator};
 use codec::{Decode, Encode};
@@ -18,14 +19,7 @@ use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use network::NetworkData;
 use rand::{prelude::SliceRandom, Rng};
-use std::{
-    collections::HashSet,
-    convert::TryInto,
-    fmt::{self, Debug},
-    io::{Read, Write},
-    marker::PhantomData,
-    time::Duration,
-};
+use std::{collections::HashSet, fmt, marker::PhantomData, time::Duration};
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
@@ -107,7 +101,13 @@ enum TaskDetails<H: Hasher, D: Data, S: Signature> {
 }
 
 #[derive(Clone)]
-pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read> {
+pub struct LocalIO<
+    D: Data,
+    DP: DataProvider<D>,
+    FH: FinalizationHandler<D>,
+    US: BackupWriter,
+    UL: BackupReader,
+> {
     data_provider: DP,
     finalization_handler: FH,
     unit_saver: US,
@@ -115,8 +115,13 @@ pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US:
     _phantom: PhantomData<D>,
 }
 
-impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read>
-    LocalIO<D, DP, FH, US, UL>
+impl<
+        D: Data,
+        DP: DataProvider<D>,
+        FH: FinalizationHandler<D>,
+        US: BackupWriter,
+        UL: BackupReader,
+    > LocalIO<D, DP, FH, US, UL>
 {
     pub fn new(
         data_provider: DP,
@@ -572,8 +577,8 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    US: BackupWriter + Send + Sync + 'static,
+    UL: BackupReader + Send + Sync + 'static,
     N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,

@@ -1,21 +1,35 @@
 use std::io::Write;
 
-use aleph_bft_types::Terminator;
+use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender};
+use aleph_bft_types::{MultiKeychain, Terminator};
+use async_trait::async_trait;
 use codec::Encode;
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
 
-use crate::{
-    alerts::AlertData, backup::BackupItem, units::UncheckedSignedUnit, Data, Hasher, MultiKeychain,
-    Receiver, Sender,
-};
+use crate::{alerts::AlertData, backup::BackupItem};
 
 const LOG_TARGET: &str = "AlephBFT-backup-saver";
+
+#[async_trait]
+/// Write backups to peristent storage.
+pub trait BackupWriter {
+    /// Append new data to the backup.
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()>;
+}
+
+#[async_trait]
+impl<W: Write + Send> BackupWriter for W {
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
+        Write::write_all(self, data)?;
+        self.flush()
+    }
+}
 
 /// Component responsible for saving units and alert data into backup.
 /// It waits for items to appear on its receivers, and writes them to backup.
 /// It announces a successful write through an appropriate response sender.
-pub struct BackupSaver<H: Hasher, D: Data, MK: MultiKeychain, W: Write> {
+pub struct BackupSaver<H: Hasher, D: Data, MK: MultiKeychain, W: BackupWriter> {
     units_from_runway: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
     data_from_alerter: Receiver<AlertData<H, D, MK>>,
     responses_for_runway: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
@@ -23,7 +37,7 @@ pub struct BackupSaver<H: Hasher, D: Data, MK: MultiKeychain, W: Write> {
     backup: W,
 }
 
-impl<H: Hasher, D: Data, MK: MultiKeychain, W: Write> BackupSaver<H, D, MK, W> {
+impl<H: Hasher, D: Data, MK: MultiKeychain, W: BackupWriter> BackupSaver<H, D, MK, W> {
     pub fn new(
         units_from_runway: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
         data_from_alerter: Receiver<AlertData<H, D, MK>>,
@@ -40,10 +54,8 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, W: Write> BackupSaver<H, D, MK, W> {
         }
     }
 
-    pub fn save_item(&mut self, item: BackupItem<H, D, MK>) -> Result<(), std::io::Error> {
-        self.backup.write_all(&item.encode())?;
-        self.backup.flush()?;
-        Ok(())
+    pub async fn save_item(&mut self, item: BackupItem<H, D, MK>) -> Result<(), std::io::Error> {
+        self.backup.append(&item.encode()).await
     }
 
     pub async fn run(&mut self, mut terminator: Terminator) {
@@ -59,7 +71,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, W: Write> BackupSaver<H, D, MK, W> {
                         },
                     };
                     let item = BackupItem::Unit(unit.clone());
-                    if let Err(e) = self.save_item(item) {
+                    if let Err(e) = self.save_item(item).await {
                         error!(target: LOG_TARGET, "couldn't save item to backup: {:?}", e);
                         break;
                     }
@@ -77,7 +89,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, W: Write> BackupSaver<H, D, MK, W> {
                         },
                     };
                     let item = BackupItem::AlertData(data.clone());
-                    if let Err(e) = self.save_item(item) {
+                    if let Err(e) = self.save_item(item).await {
                         error!(target: LOG_TARGET, "couldn't save item to backup: {:?}", e);
                         break;
                     }

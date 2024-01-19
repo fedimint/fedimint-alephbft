@@ -1,8 +1,8 @@
 use codec::{Decode, Encode};
 use std::fmt::Debug;
 
-pub use loader::{BackupLoader, LoadedData};
-pub use saver::BackupSaver;
+pub use loader::{BackupLoader, BackupReader, LoadedData};
+pub use saver::{BackupSaver, BackupWriter};
 
 use crate::{alerts::AlertData, units::UncheckedSignedUnit, Data, Hasher, MultiKeychain};
 

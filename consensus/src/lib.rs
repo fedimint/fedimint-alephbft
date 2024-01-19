@@ -24,6 +24,7 @@ pub use aleph_bft_types::{
     PartialMultisignature, PartiallyMultisigned, Recipient, Round, SessionId, Signable, Signature,
     SignatureError, SignatureSet, Signed, SpawnHandle, TaskHandle, UncheckedSigned,
 };
+pub use backup::{BackupReader, BackupWriter};
 pub use config::{
     create_config, default_config, default_delay_config, exponential_slowdown, Config, DelayConfig,
 };

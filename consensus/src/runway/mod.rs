@@ -6,9 +6,9 @@ use crate::{
         ControlHash, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
         UnitStoreStatus, Validator,
     },
-    Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
-    NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature, Signed, SpawnHandle,
-    UncheckedSigned,
+    BackupReader, BackupWriter, Config, Data, DataProvider, FinalizationHandler, Hasher, Index,
+    Keychain, MultiKeychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature,
+    Signed, SpawnHandle, UncheckedSigned,
 };
 use aleph_bft_types::{handle_task_termination, Recipient, Terminator};
 use futures::{
@@ -18,14 +18,7 @@ use futures::{
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
-use std::{
-    collections::HashSet,
-    convert::TryFrom,
-    fmt,
-    io::{Read, Write},
-    marker::PhantomData,
-    time::Duration,
-};
+use std::{collections::HashSet, convert::TryFrom, fmt, marker::PhantomData, time::Duration};
 
 mod collection;
 mod packer;
@@ -871,8 +864,8 @@ pub struct RunwayIO<
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
-    W: Write + Send + Sync + 'static,
-    R: Read + Send + Sync + 'static,
+    W: BackupWriter + Send + Sync + 'static,
+    R: BackupReader + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
 > {
@@ -887,8 +880,8 @@ impl<
         H: Hasher,
         D: Data,
         MK: MultiKeychain,
-        W: Write + Send + Sync + 'static,
-        R: Read + Send + Sync + 'static,
+        W: BackupWriter + Send + Sync + 'static,
+        R: BackupReader + Send + Sync + 'static,
         DP: DataProvider<D>,
         FH: FinalizationHandler<D>,
     > RunwayIO<H, D, MK, W, R, DP, FH>
@@ -919,8 +912,8 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 ) where
     H: Hasher,
     D: Data,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    US: BackupWriter + Send + Sync + 'static,
+    UL: BackupReader + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
