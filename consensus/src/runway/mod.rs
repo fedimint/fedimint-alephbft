@@ -6,9 +6,9 @@ use crate::{
         ControlHash, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
         UnitStoreStatus, Validator,
     },
-    Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
-    NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature, Signed, SpawnHandle,
-    Terminator, UncheckedSigned,
+    BackupReader, BackupWriter, Config, Data, DataProvider, FinalizationHandler, Hasher, Index,
+    Keychain, MultiKeychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature,
+    Signed, SpawnHandle, Terminator, UncheckedSigned,
 };
 use aleph_bft_types::Recipient;
 use futures::{
@@ -871,8 +871,8 @@ pub struct RunwayIO<
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
-    W: Write + Send + Sync + 'static,
-    R: Read + Send + Sync + 'static,
+    W: BackupWriter + Send + Sync + 'static,
+    R: BackupReader + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
 > {
@@ -887,8 +887,8 @@ impl<
         H: Hasher,
         D: Data,
         MK: MultiKeychain,
-        W: Write + Send + Sync + 'static,
-        R: Read + Send + Sync + 'static,
+        W: BackupWriter + Send + Sync + 'static,
+        R: BackupReader + Send + Sync + 'static,
         DP: DataProvider<D>,
         FH: FinalizationHandler<D>,
     > RunwayIO<H, D, MK, W, R, DP, FH>
@@ -919,8 +919,8 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 ) where
     H: Hasher,
     D: Data,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    US: BackupWriter + Send + Sync + 'static,
+    UL: BackupReader + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,

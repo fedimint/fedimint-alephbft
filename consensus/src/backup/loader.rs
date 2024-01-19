@@ -1,5 +1,6 @@
 use std::{collections::HashSet, fmt, fmt::Debug, io::Read, marker::PhantomData};
 
+use async_trait::async_trait;
 use codec::{Decode, Error as CodecError};
 use futures::channel::oneshot;
 use log::{error, info, warn};
@@ -63,14 +64,29 @@ impl From<CodecError> for LoaderError {
     }
 }
 
-pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: Read> {
+#[async_trait]
+pub trait BackupReader {
+    /// Read the entire backup.
+    async fn read(&mut self) -> std::io::Result<Vec<u8>>;
+}
+
+#[async_trait]
+impl<R: Read + Send> BackupReader for R {
+    async fn read(&mut self) -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        self.read_to_end(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: BackupReader> {
     backup: R,
     index: NodeIndex,
     session_id: SessionId,
     _phantom: PhantomData<(H, D, S)>,
 }
 
-impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
+impl<H: Hasher, D: Data, S: Signature, R: BackupReader> BackupLoader<H, D, S, R> {
     pub fn new(backup: R, index: NodeIndex, session_id: SessionId) -> BackupLoader<H, D, S, R> {
         BackupLoader {
             backup,
@@ -80,9 +96,8 @@ impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
         }
     }
 
-    fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
-        let mut buf = Vec::new();
-        self.backup.read_to_end(&mut buf)?;
+    async fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
+        let buf = self.backup.read().await?;
         let input = &mut &buf[..];
         let mut result = Vec::new();
         while !input.is_empty() {
@@ -163,7 +178,7 @@ impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
         starting_round: oneshot::Sender<Option<Round>>,
         next_round_collection: oneshot::Receiver<Round>,
     ) {
-        let units = match self.load() {
+        let units = match self.load().await {
             Ok(items) => items,
             Err(e) => {
                 error!(target: LOG_TARGET, "unable to load backup data: {}", e);
