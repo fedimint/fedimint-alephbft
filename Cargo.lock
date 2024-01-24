@@ -39,29 +39,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aleph-bft"
-version = "0.33.0"
-dependencies = [
- "aleph-bft-mock",
- "aleph-bft-rmc",
- "aleph-bft-types",
- "anyhow",
- "async-trait",
- "derivative",
- "env_logger",
- "futures",
- "futures-timer",
- "itertools",
- "log",
- "parity-scale-codec",
- "parking_lot",
- "rand",
- "serial_test",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "aleph-bft-crypto"
 version = "0.8.0"
 dependencies = [
@@ -77,11 +54,11 @@ dependencies = [
 name = "aleph-bft-examples-blockchain"
 version = "0.0.3"
 dependencies = [
- "aleph-bft",
  "aleph-bft-mock",
  "async-trait",
  "clap 4.4.16",
  "env_logger",
+ "fedimint-aleph-bft",
  "futures",
  "futures-timer",
  "log",
@@ -97,12 +74,12 @@ dependencies = [
 name = "aleph-bft-examples-ordering"
 version = "0.0.3"
 dependencies = [
- "aleph-bft",
  "aleph-bft-mock",
  "aleph-bft-types",
  "async-trait",
  "clap 4.4.16",
  "env_logger",
+ "fedimint-aleph-bft",
  "futures",
  "log",
  "parity-scale-codec",
@@ -116,10 +93,10 @@ name = "aleph-bft-fuzz"
 version = "0.0.0"
 dependencies = [
  "afl",
- "aleph-bft",
  "aleph-bft-mock",
  "async-trait",
  "env_logger",
+ "fedimint-aleph-bft",
  "futures",
  "futures-timer",
  "libfuzzer-sys",
@@ -543,6 +520,29 @@ checksum = "a258e46cdc063eb8519c00b9fc845fc47bcfca4130e2f08e88665ceda8474245"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "fedimint-aleph-bft"
+version = "0.33.0"
+dependencies = [
+ "aleph-bft-mock",
+ "aleph-bft-rmc",
+ "aleph-bft-types",
+ "anyhow",
+ "async-trait",
+ "derivative",
+ "env_logger",
+ "futures",
+ "futures-timer",
+ "itertools",
+ "log",
+ "parity-scale-codec",
+ "parking_lot",
+ "rand",
+ "serial_test",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-aleph-bft = { path = "../consensus", version = "*" }
+aleph-bft = { package = "fedimint-aleph-bft", path = "../consensus", version = "*" }
 aleph-bft-mock = { path = "../mock", version = "*" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive", "std"] }
