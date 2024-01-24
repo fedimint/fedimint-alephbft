@@ -7,7 +7,7 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-aleph-bft = { path = "../../consensus", version = "*" }
+aleph-bft = { package = "fedimint-aleph-bft", path = "../../consensus", version = "*" }
 aleph-bft-mock = { path = "../../mock", version = "*" }
 aleph-bft-types = { path = "../../types", version = "*" }
 async-trait = "0.1"
