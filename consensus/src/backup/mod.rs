@@ -1,7 +1,5 @@
-pub use loader::BackupLoader;
-pub use loader::BackupReader;
-pub use saver::BackupSaver;
-pub use saver::BackupWriter;
+pub use loader::{BackupLoader, BackupReader};
+pub use saver::{BackupSaver, BackupWriter};
 
 mod loader;
 mod saver;

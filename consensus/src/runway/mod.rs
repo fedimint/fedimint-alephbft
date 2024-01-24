@@ -19,12 +19,7 @@ use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use std::{
-    collections::HashSet,
-    convert::TryFrom,
-    fmt,
-    io::{Read, Write},
-    marker::PhantomData,
-    time::Duration,
+    collections::HashSet, convert::TryFrom, fmt, io::Write, marker::PhantomData, time::Duration,
 };
 
 mod collection;
