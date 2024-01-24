@@ -1,22 +1,38 @@
 use std::io::Write;
 
 use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender, Signature, Terminator};
+use async_trait::async_trait;
 use codec::Encode;
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
 
 const LOG_TARGET: &str = "AlephBFT-backup-saver";
 
+#[async_trait]
+/// Write backups to peristent storage.
+pub trait BackupWriter {
+    /// Append new data to the backup.
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()>;
+}
+
+#[async_trait]
+impl<W: Write + Send> BackupWriter for W {
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
+        Write::write_all(self, data)?;
+        self.flush()
+    }
+}
+
 /// Component responsible for saving units into backup.
 /// It waits for items to appear on its receivers, and writes them to backup.
 /// It announces a successful write through an appropriate response sender.
-pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: Write> {
+pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: BackupWriter> {
     units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
     responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
     backup: W,
 }
 
-impl<H: Hasher, D: Data, S: Signature, W: Write> BackupSaver<H, D, S, W> {
+impl<H: Hasher, D: Data, S: Signature, W: BackupWriter> BackupSaver<H, D, S, W> {
     pub fn new(
         units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
         responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
@@ -29,10 +45,11 @@ impl<H: Hasher, D: Data, S: Signature, W: Write> BackupSaver<H, D, S, W> {
         }
     }
 
-    pub fn save_item(&mut self, item: &UncheckedSignedUnit<H, D, S>) -> Result<(), std::io::Error> {
-        self.backup.write_all(&item.encode())?;
-        self.backup.flush()?;
-        Ok(())
+    pub async fn save_item(
+        &mut self,
+        item: &UncheckedSignedUnit<H, D, S>,
+    ) -> Result<(), std::io::Error> {
+        self.backup.append(&item.encode()).await
     }
 
     pub async fn run(&mut self, mut terminator: Terminator) {
@@ -47,7 +64,7 @@ impl<H: Hasher, D: Data, S: Signature, W: Write> BackupSaver<H, D, S, W> {
                             break;
                         },
                     };
-                    if let Err(e) = self.save_item(&item) {
+                    if let Err(e) = self.save_item(&item).await {
                         error!(target: LOG_TARGET, "couldn't save item to backup: {:?}", e);
                         break;
                     }
