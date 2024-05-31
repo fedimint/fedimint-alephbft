@@ -8,12 +8,13 @@ use crate::{
     },
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, UnitCoord},
-    Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
-    Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
+    BackupReader, BackupWriter, Config, Data, DataProvider, FinalizationHandler, Hasher,
+    MultiKeychain, Network, NodeIndex, Receiver, Recipient, Round, Sender, Signature, SpawnHandle,
+    Terminator, UncheckedSigned,
 };
 use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
-use futures::{channel::mpsc, pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamExt};
+use futures::{channel::mpsc, pin_mut, FutureExt, StreamExt};
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
@@ -111,8 +112,8 @@ pub struct LocalIO<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    US: AsyncWrite,
-    UL: AsyncRead,
+    US: BackupWriter,
+    UL: BackupReader,
 > {
     data_provider: DP,
     finalization_handler: FH,
@@ -121,8 +122,13 @@ pub struct LocalIO<
     _phantom: PhantomData<D>,
 }
 
-impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: AsyncWrite, UL: AsyncRead>
-    LocalIO<D, DP, FH, US, UL>
+impl<
+        D: Data,
+        DP: DataProvider<D>,
+        FH: FinalizationHandler<D>,
+        US: BackupWriter,
+        UL: BackupReader,
+    > LocalIO<D, DP, FH, US, UL>
 {
     pub fn new(
         data_provider: DP,
@@ -578,8 +584,8 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    US: AsyncWrite + Send + Sync + 'static,
-    UL: AsyncRead + Send + Sync + 'static,
+    US: BackupWriter + Send + Sync + 'static,
+    UL: BackupReader + Send + Sync + 'static,
     N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,

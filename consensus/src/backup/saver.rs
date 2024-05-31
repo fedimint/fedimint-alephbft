@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use async_trait::async_trait;
 
 use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender, Signature, Terminator};
 use codec::Encode;
@@ -7,16 +7,31 @@ use log::{debug, error};
 
 const LOG_TARGET: &str = "AlephBFT-backup-saver";
 
+#[async_trait]
+/// Write backups to peristent storage.
+pub trait BackupWriter {
+    /// Append new data to the backup.
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()>;
+}
+
+#[async_trait]
+impl<W: AsyncWrite + Send + Unpin> BackupWriter for W {
+    async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.write_all(data).await?;
+        self.flush().await
+    }
+}
+
 /// Component responsible for saving units into backup.
 /// It waits for items to appear on its receivers, and writes them to backup.
 /// It announces a successful write through an appropriate response sender.
-pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: AsyncWrite> {
+pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: BackupWriter> {
     units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
     responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
-    backup: Pin<Box<W>>,
+    backup: W,
 }
 
-impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
+impl<H: Hasher, D: Data, S: Signature, W: BackupWriter> BackupSaver<H, D, S, W> {
     pub fn new(
         units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
         responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
@@ -25,7 +40,7 @@ impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
         BackupSaver {
             units_from_runway,
             responses_for_runway,
-            backup: Box::pin(backup),
+            backup,
         }
     }
 
@@ -33,8 +48,7 @@ impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
         &mut self,
         item: &UncheckedSignedUnit<H, D, S>,
     ) -> Result<(), std::io::Error> {
-        self.backup.write_all(&item.encode()).await?;
-        self.backup.flush().await
+        self.backup.append(&item.encode()).await
     }
 
     pub async fn run(&mut self, mut terminator: Terminator) {

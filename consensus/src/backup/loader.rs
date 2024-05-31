@@ -1,8 +1,8 @@
+use async_trait::async_trait;
 use std::{
     collections::HashSet,
     fmt::{self, Debug},
     marker::PhantomData,
-    pin::Pin,
 };
 
 use codec::{Decode, Error as CodecError};
@@ -68,17 +68,32 @@ impl From<CodecError> for LoaderError {
     }
 }
 
-pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: AsyncRead> {
-    backup: Pin<Box<R>>,
+#[async_trait]
+pub trait BackupReader {
+    /// Read the entire backup.
+    async fn read(&mut self) -> std::io::Result<Vec<u8>>;
+}
+
+#[async_trait]
+impl<R: AsyncRead + Send + Unpin> BackupReader for R {
+    async fn read(&mut self) -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        self.read_to_end(&mut buf).await?;
+        Ok(buf)
+    }
+}
+
+pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: BackupReader> {
+    backup: R,
     index: NodeIndex,
     session_id: SessionId,
     _phantom: PhantomData<(H, D, S)>,
 }
 
-impl<H: Hasher, D: Data, S: Signature, R: AsyncRead> BackupLoader<H, D, S, R> {
+impl<H: Hasher, D: Data, S: Signature, R: BackupReader> BackupLoader<H, D, S, R> {
     pub fn new(backup: R, index: NodeIndex, session_id: SessionId) -> BackupLoader<H, D, S, R> {
         BackupLoader {
-            backup: Box::pin(backup),
+            backup,
             index,
             session_id,
             _phantom: PhantomData,
@@ -86,8 +101,7 @@ impl<H: Hasher, D: Data, S: Signature, R: AsyncRead> BackupLoader<H, D, S, R> {
     }
 
     async fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
-        let mut buf = Vec::new();
-        self.backup.read_to_end(&mut buf).await?;
+        let buf = self.backup.read().await?;
         let input = &mut &buf[..];
         let mut result = Vec::new();
         while !input.is_empty() {
