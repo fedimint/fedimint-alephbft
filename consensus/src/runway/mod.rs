@@ -142,6 +142,11 @@ where
     backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
     preunits_for_packer: Sender<PreUnit<H>>,
     signed_units_from_packer: Receiver<SignedUnit<H, D, MK>>,
+    /// Units in the DAG that carry data which has not been ordered yet.
+    pending_data: HashSet<H::Hash>,
+    /// Tells the packer how many units with unordered data are in the DAG,
+    /// so it keeps creating units until all of it is ordered.
+    pending_data_for_packer: Sender<usize>,
     /// Units loaded from our backup that have not reached the DAG yet. They
     /// are already in the backup, so they skip the saver once they do.
     replayed_units: HashSet<H::Hash>,
@@ -257,6 +262,7 @@ struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKey
     resolved_requests: Sender<Request<H>>,
     preunits_for_packer: Sender<PreUnit<H>>,
     signed_units_from_packer: Receiver<SignedUnit<H, D, MK>>,
+    pending_data_for_packer: Sender<usize>,
 }
 
 impl<H, D, FH, MK> Runway<H, D, FH, MK>
@@ -284,6 +290,7 @@ where
             resolved_requests,
             preunits_for_packer,
             signed_units_from_packer,
+            pending_data_for_packer,
         } = config;
         let store = UnitStore::new(n_members, max_round);
 
@@ -307,6 +314,8 @@ where
             responses_for_collection,
             preunits_for_packer,
             signed_units_from_packer,
+            pending_data: HashSet::new(),
+            pending_data_for_packer,
             replayed_units: HashSet::new(),
             exiting: false,
         }
@@ -602,6 +611,10 @@ where
                 self.store.add_parents(h, p_hashes);
                 self.resolve_missing_parents(&h);
                 if let Some(su) = self.store.unit_by_hash(&h).cloned() {
+                    if su.as_signable().data().is_some() && self.pending_data.insert(h) {
+                        self.send_pending_data();
+                    }
+
                     if self.replayed_units.remove(&h) {
                         // Saving it again would append a second copy to the
                         // backup. It still needs what a save triggers, most
@@ -658,7 +671,11 @@ where
     }
 
     fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
+        let pending_before = self.pending_data.len();
+
         for hash in batch {
+            self.pending_data.remove(&hash);
+
             let unit = self
                 .store
                 .unit_by_hash(&hash)
@@ -671,6 +688,18 @@ where
                 unit.data().clone(),
             )
         }
+
+        if self.pending_data.len() != pending_before {
+            self.send_pending_data();
+        }
+    }
+
+    fn send_pending_data(&mut self) {
+        // The packer only reads this while it runs, so there is nothing to do
+        // once it is gone.
+        let _ = self
+            .pending_data_for_packer
+            .unbounded_send(self.pending_data.len());
     }
 
     fn send_message_for_network(
@@ -1040,6 +1069,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     } = runway_io;
     let (preunits_for_packer, preunits_from_runway) = mpsc::unbounded();
     let (signed_units_for_runway, signed_units_from_packer) = mpsc::unbounded();
+    let (pending_data_for_packer, pending_data_from_runway) = mpsc::unbounded();
 
     let runway_handle = spawn_handle
         .spawn_essential("runway", {
@@ -1059,6 +1089,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
                 max_round: config.max_round(),
                 preunits_for_packer,
                 signed_units_from_packer,
+                pending_data_for_packer,
             };
             let runway_terminator = terminator.add_offspring_connection("AlephBFT-runway");
             let validator = validator.clone();
@@ -1077,6 +1108,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
                 data_provider,
                 preunits_from_runway,
                 signed_units_for_runway,
+                pending_data_from_runway,
                 keychain.clone(),
                 config.session_id(),
             );
