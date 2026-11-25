@@ -431,7 +431,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "fedimint-aleph-bft"
-version = "0.36.0"
+version = "0.36.1"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
