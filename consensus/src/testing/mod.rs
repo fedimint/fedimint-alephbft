@@ -6,11 +6,12 @@ mod crash;
 mod crash_recovery;
 mod creation;
 mod dag;
+mod quiescence;
 mod unreliable;
 
 use crate::{
-    create_config, run_session, Config, DelayConfig, LocalIO, Network as NetworkT, NodeCount,
-    NodeIndex, SpawnHandle, TaskHandle, Terminator,
+    create_config, run_session, Config, DataProvider as DataProviderT, DelayConfig, LocalIO,
+    Network as NetworkT, NodeCount, NodeIndex, SpawnHandle, TaskHandle, Terminator,
 };
 use aleph_bft_mock::{
     Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, Network as MockNetwork,
@@ -77,7 +78,24 @@ pub fn spawn_honest_member(
     units: Vec<u8>,
     network: impl 'static + NetworkT<NetworkData>,
 ) -> HonestMember {
-    let data_provider = DataProvider::new();
+    spawn_honest_member_with_data_provider(
+        spawner,
+        node_index,
+        n_members,
+        units,
+        network,
+        DataProvider::new(),
+    )
+}
+
+pub fn spawn_honest_member_with_data_provider(
+    spawner: Spawner,
+    node_index: NodeIndex,
+    n_members: NodeCount,
+    units: Vec<u8>,
+    network: impl 'static + NetworkT<NetworkData>,
+    data_provider: impl 'static + DataProviderT<Data> + Send,
+) -> HonestMember {
     let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members, gen_delay_config());
     let (exit_tx, exit_rx) = oneshot::channel();

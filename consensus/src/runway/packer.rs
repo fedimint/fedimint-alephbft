@@ -3,7 +3,7 @@ use crate::{
     Data, DataProvider, Hasher, MultiKeychain, NodeIndex, Receiver, Sender, SessionId, Signed,
     Terminator,
 };
-use futures::{pin_mut, FutureExt, StreamExt};
+use futures::{future::pending, pin_mut, FutureExt, StreamExt};
 use log::{debug, error};
 use std::marker::PhantomData;
 
@@ -19,6 +19,9 @@ where
     data_provider: DP,
     preunits_from_runway: Receiver<PreUnit<H>>,
     signed_units_for_runway: Sender<SignedUnit<H, D, MK>>,
+    pending_data_from_runway: Receiver<usize>,
+    /// The latest number of units with unordered data in the DAG.
+    pending_data: usize,
     keychain: MK,
     session_id: SessionId,
     _phantom: PhantomData<D>,
@@ -35,6 +38,7 @@ where
         data_provider: DP,
         preunits_from_runway: Receiver<PreUnit<H>>,
         signed_units_for_runway: Sender<SignedUnit<H, D, MK>>,
+        pending_data_from_runway: Receiver<usize>,
         keychain: MK,
         session_id: SessionId,
     ) -> Self {
@@ -42,6 +46,8 @@ where
             data_provider,
             preunits_from_runway,
             signed_units_for_runway,
+            pending_data_from_runway,
+            pending_data: 0,
             keychain,
             session_id,
             _phantom: PhantomData,
@@ -64,7 +70,17 @@ where
                 }
             };
             debug!(target: "AlephBFT-packer", "{:?} Received PreUnit.", self.index());
-            let data = self.data_provider.get_data().await;
+            // A data provider may wait until it has data, so that no units are
+            // created while there is nothing to order. Units with data already
+            // in the DAG still need our units to get ordered, so while there
+            // are any we create our unit without data instead of waiting.
+            let data = futures::select_biased! {
+                data = self.data_provider.get_data().fuse() => data,
+                () = wait_for_pending_data(
+                    &mut self.pending_data_from_runway,
+                    &mut self.pending_data,
+                ).fuse() => None,
+            };
             debug!(target: "AlephBFT-packer", "{:?} Received data.", self.index());
             let full_unit = FullUnit::new(preunit, data, self.session_id);
             let signed_unit = Signed::sign(full_unit, &self.keychain);
@@ -95,6 +111,28 @@ where
     }
 }
 
+/// Returns once the DAG holds a unit with data that has not been ordered yet.
+async fn wait_for_pending_data(
+    pending_data_from_runway: &mut Receiver<usize>,
+    pending_data: &mut usize,
+) {
+    loop {
+        while let Ok(Some(count)) = pending_data_from_runway.try_next() {
+            *pending_data = count;
+        }
+
+        if *pending_data > 0 {
+            return;
+        }
+
+        match pending_data_from_runway.next().await {
+            Some(count) => *pending_data = count,
+            // The runway is gone, so the session is ending.
+            None => pending().await,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Packer;
@@ -119,16 +157,19 @@ mod tests {
         packer: Packer<Hasher64, Data, DataProvider, Keychain>,
         terminator: (Terminator, oneshot::Sender<()>),
         preunit: PreUnit<Hasher64>,
+        _pending_data_channel: Sender<usize>,
     }
 
     fn prepare(keychain: Keychain) -> Preliminaries {
         let data_provider = DataProvider::new();
         let (preunits_channel, preunits_from_runway) = mpsc::unbounded();
         let (signed_units_for_runway, signed_units_channel) = mpsc::unbounded();
+        let (pending_data_channel, pending_data_from_runway) = mpsc::unbounded();
         let packer = Packer::new(
             data_provider,
             preunits_from_runway,
             signed_units_for_runway,
+            pending_data_from_runway,
             keychain,
             SESSION_ID,
         );
@@ -143,6 +184,7 @@ mod tests {
             packer,
             terminator: (terminator, _exit_tx),
             preunit,
+            _pending_data_channel: pending_data_channel,
         }
     }
 
@@ -209,10 +251,12 @@ mod tests {
         let data_provider = StalledDataProvider::new();
         let (preunits_channel, preunits_from_runway) = mpsc::unbounded::<PreUnit<Hasher64>>();
         let (signed_units_for_runway, _signed_units_channel) = mpsc::unbounded();
+        let (_pending_data_channel, pending_data_from_runway) = mpsc::unbounded();
         let mut packer = Packer::new(
             data_provider,
             preunits_from_runway,
             signed_units_for_runway,
+            pending_data_from_runway,
             keychain,
             SESSION_ID,
         );
@@ -238,5 +282,94 @@ mod tests {
         packer_handle
             .await
             .expect("Packer terminated with an error");
+    }
+
+    /// A packer whose data provider waits for data, with its channels.
+    struct StalledPacker {
+        packer: Packer<Hasher64, Data, StalledDataProvider, Keychain>,
+        preunits_channel: Sender<PreUnit<Hasher64>>,
+        signed_units_channel: Receiver<SignedUnit<Hasher64, Data, Keychain>>,
+        pending_data_channel: Sender<usize>,
+    }
+
+    fn stalled_packer() -> StalledPacker {
+        let (preunits_channel, preunits_from_runway) = mpsc::unbounded();
+        let (signed_units_for_runway, signed_units_channel) = mpsc::unbounded();
+        let (pending_data_channel, pending_data_from_runway) = mpsc::unbounded();
+        let packer = Packer::new(
+            StalledDataProvider::new(),
+            preunits_from_runway,
+            signed_units_for_runway,
+            pending_data_from_runway,
+            Keychain::new(N_MEMBERS, NODE_ID),
+            SESSION_ID,
+        );
+        StalledPacker {
+            packer,
+            preunits_channel,
+            signed_units_channel,
+            pending_data_channel,
+        }
+    }
+
+    fn preunit() -> PreUnit<Hasher64> {
+        let parent_map = NodeMap::with_size(N_MEMBERS);
+        PreUnit::new(NODE_ID, 0, ControlHash::new(&parent_map))
+    }
+
+    #[tokio::test]
+    async fn waits_for_data_while_none_is_pending() {
+        let StalledPacker {
+            mut packer,
+            preunits_channel,
+            mut signed_units_channel,
+            pending_data_channel,
+        } = stalled_packer();
+        let (_exit_tx, exit_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = packer
+                .run(Terminator::create_root(exit_rx, "AlephBFT-packer"))
+                .await;
+        });
+
+        preunits_channel.unbounded_send(preunit()).unwrap();
+        pending_data_channel.unbounded_send(0).unwrap();
+
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            signed_units_channel.next()
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn packs_a_unit_without_data_while_data_is_pending() {
+        let StalledPacker {
+            mut packer,
+            preunits_channel,
+            mut signed_units_channel,
+            pending_data_channel,
+        } = stalled_packer();
+        let (_exit_tx, exit_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = packer
+                .run(Terminator::create_root(exit_rx, "AlephBFT-packer"))
+                .await;
+        });
+
+        preunits_channel.unbounded_send(preunit()).unwrap();
+        pending_data_channel.unbounded_send(1).unwrap();
+
+        let unit = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            signed_units_channel.next(),
+        )
+        .await
+        .expect("a unit is packed while data is pending")
+        .expect("Packer SignedUnit channel closed")
+        .into_unchecked()
+        .into_signable();
+        assert_eq!(unit.data(), &None);
     }
 }
