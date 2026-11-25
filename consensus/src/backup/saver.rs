@@ -16,30 +16,20 @@ const LOG_TARGET: &str = "AlephBFT-backup-saver";
 /// append. If that does not make writes durable for your storage backend,
 /// provide a custom implementation that does.
 pub trait BackupWriter {
-    /// Append new data and persist it along with any earlier appends before returning success.
-    async fn append(&mut self, data: &[u8]) -> std::io::Result<()>;
-
-    /// Append data, allowing it to be buffered when `flush` is false.
+    /// Append new data to the backup.
     ///
-    /// When `flush` is true, persist this data and all earlier appends in
-    /// order before returning success. The saver sets `flush` for local units
-    /// because broadcasting one and then losing it in a crash could cause the
-    /// node to sign a second unit for the same round.
-    ///
-    /// The default calls [`Self::append`], so writers that always flush do
-    /// not need to override this method.
-    async fn append_with_flush(&mut self, data: &[u8], flush: bool) -> std::io::Result<()>
-    where
-        Self: Send,
-    {
-        let _ = flush;
-        self.append(data).await
-    }
+    /// `flush` is set for our own units, which must be persisted, together
+    /// with everything appended before them, before this returns: we
+    /// broadcast them once it does, and forgetting one after a crash could
+    /// make us sign a second unit for its round. Units of other nodes may be
+    /// buffered until the next flush, since no node can tell whether we stored
+    /// them before we broadcast a unit of our own on top of them.
+    async fn append(&mut self, data: &[u8], flush: bool) -> std::io::Result<()>;
 }
 
 #[async_trait]
 impl<W: AsyncWrite + Send + Unpin> BackupWriter for W {
-    async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
+    async fn append(&mut self, data: &[u8], _flush: bool) -> std::io::Result<()> {
         self.write_all(data).await?;
         self.flush().await
     }
@@ -55,7 +45,7 @@ pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: BackupWriter> {
     index: NodeIndex,
 }
 
-impl<H: Hasher, D: Data, S: Signature, W: BackupWriter + Send> BackupSaver<H, D, S, W> {
+impl<H: Hasher, D: Data, S: Signature, W: BackupWriter> BackupSaver<H, D, S, W> {
     pub fn new(
         units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
         responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
@@ -75,7 +65,7 @@ impl<H: Hasher, D: Data, S: Signature, W: BackupWriter + Send> BackupSaver<H, D,
         item: &UncheckedSignedUnit<H, D, S>,
     ) -> Result<(), std::io::Error> {
         let flush = item.as_signable().creator() == self.index;
-        self.backup.append_with_flush(&item.encode(), flush).await
+        self.backup.append(&item.encode(), flush).await
     }
 
     pub async fn run(&mut self, mut terminator: Terminator) {
@@ -123,23 +113,13 @@ mod tests {
 
     use aleph_bft_mock::{Data, Hasher64, Keychain, Saver, Signature};
 
-    use super::{BackupSaver, BackupWriter};
     use crate::{
+        backup::BackupSaver,
         units::{creator_set, preunit_to_unchecked_signed_unit, UncheckedSignedUnit},
         NodeCount, NodeIndex, Terminator,
     };
 
-    /// Implements only the original writer method.
-    struct LegacyWriter(Saver);
-
-    #[async_trait::async_trait]
-    impl BackupWriter for LegacyWriter {
-        async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
-            self.0.append(data).await
-        }
-    }
-
-    type TestBackupSaver = BackupSaver<Hasher64, Data, Signature, LegacyWriter>;
+    type TestBackupSaver = BackupSaver<Hasher64, Data, Signature, Saver>;
     type TestUnit = UncheckedSignedUnit<Hasher64, Data, Signature>;
     struct PrepareSaverResponse<F: futures::Future> {
         task: F,
@@ -152,7 +132,7 @@ mod tests {
         let (units_for_saver, units_from_runway) = mpsc::unbounded();
         let (units_for_runway, units_from_saver) = mpsc::unbounded();
         let (exit_tx, exit_rx) = oneshot::channel();
-        let backup = LegacyWriter(Saver::new());
+        let backup = Saver::new();
 
         let task = {
             let mut saver: TestBackupSaver =
@@ -216,26 +196,11 @@ mod tests {
     struct FlushRecorder(std::sync::Arc<std::sync::Mutex<Vec<bool>>>);
 
     #[async_trait::async_trait]
-    impl BackupWriter for FlushRecorder {
-        async fn append(&mut self, data: &[u8]) -> std::io::Result<()> {
-            self.append_with_flush(data, true).await
-        }
-
-        async fn append_with_flush(&mut self, _data: &[u8], flush: bool) -> std::io::Result<()> {
+    impl super::BackupWriter for FlushRecorder {
+        async fn append(&mut self, _data: &[u8], flush: bool) -> std::io::Result<()> {
             self.0.lock().unwrap().push(flush);
             Ok(())
         }
-    }
-
-    #[tokio::test]
-    async fn async_write_keeps_flushing_each_append() {
-        let mut writer = futures::io::BufWriter::new(Vec::new());
-        writer.append(b"legacy").await.unwrap();
-        assert_eq!(writer.get_ref(), b"legacy");
-        writer.append_with_flush(b" remote", false).await.unwrap();
-        assert_eq!(writer.get_ref(), b"legacy remote");
-        writer.append_with_flush(b" local", true).await.unwrap();
-        assert_eq!(writer.get_ref(), b"legacy remote local");
     }
 
     #[tokio::test]

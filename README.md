@@ -26,7 +26,7 @@ of the [Aleph Zero blockchain][aleph-node-link].
 
 The code is split into several Rust packages, each having its own directory -
 see the `Cargo.toml` file, which defines the layout of the whole workspace.
-The main package, `aleph-bft`, is located in the `consensus` directory.
+The main package, `fedimint-aleph-bft`, is located in the `consensus` directory.
 Additionally, every other package has a short README describing its role
 in the AlephBFT toolset.
 
@@ -60,7 +60,7 @@ More details are available [in the book][reference-link-implementation-details].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "^0.36"
+  fedimint-aleph-bft = "0.37"
   ```
 - The main entry point is the `run_session` function, which returns a Future that runs the
   consensus algorithm.
@@ -68,6 +68,16 @@ More details are available [in the book][reference-link-implementation-details].
   and implement certain traits, which will provide all the necessary functionalities, such as networking
   and message signing.
   A comprehensive guide is available [in the documentation][reference-link-api].
+
+When upgrading from 0.36 to 0.37, add the `flush` parameter to custom
+implementations of `BackupWriter::append` and pass it at direct call sites.
+If `flush` is `true`, persist the new data and all earlier appends before
+returning success. The blanket implementation for `AsyncWrite` still calls
+`flush` on every append.
+
+On restart, append to a backup that already contains the data your reader
+loaded. Replay bypasses the writer, so if you append to an empty backup,
+the next restart won't recover those replayed units.
 
 ### Examples
 
@@ -216,10 +226,10 @@ The implementation in this repository is funded by [Aleph Zero Foundation][webpa
 [dataio-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#311-dataio
 [network-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#312-network
 [keychain-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#313-keychain
-[crate-image]: https://img.shields.io/crates/v/aleph-bft.svg
-[crate-link]: https://crates.io/crates/aleph-bft
-[docs-image]: https://docs.rs/aleph-bft/badge.svg
-[docs-link]: https://docs.rs/aleph-bft
+[crate-image]: https://img.shields.io/crates/v/fedimint-aleph-bft.svg
+[crate-link]: https://crates.io/crates/fedimint-aleph-bft
+[docs-image]: https://docs.rs/fedimint-aleph-bft/badge.svg
+[docs-link]: https://docs.rs/fedimint-aleph-bft
 [build-image]: https://github.com/Cardinal-Cryptography/AlephBFT/workflows/CI/badge.svg
 [build-link]: https://github.com/Cardinal-Cryptography/AlephBFT/actions?query=workflow%3ACI
 [license-image]: https://img.shields.io/badge/license-Apache2.0-blue.svg
